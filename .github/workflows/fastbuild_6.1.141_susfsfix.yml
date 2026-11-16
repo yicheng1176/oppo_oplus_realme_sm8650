@@ -630,6 +630,51 @@ jobs:
           grep -n 'oplusboot.verifiedbootstate=green' fs/proc/cmdline.c
           grep -n 'oplus.avbkeysha256=' fs/proc/cmdline.c
           diff -u fs/proc/cmdline.c.orig fs/proc/cmdline.c | head -40 || true
+      - name: 回移 tmpfs user xattr 支持 (6.6 backport)
+        run: |
+          cd kernel_workspace/common
+          cp -f mm/shmem.c mm/shmem.c.orig
+          python3 - <<'PYEOF'
+          import sys
+          p = 'mm/shmem.c'
+          s = open(p, encoding='utf-8').read()
+          if 'shmem_user_xattr_handler' in s:
+              print('already patched, skip')
+              sys.exit(0)
+          if '#include <linux/xattr.h>' not in s:
+              k = s.find('#include <linux/seq_file.h>')
+              assert k > 0, 'seq_file include anchor missing'
+              s = s[:k] + '#include <linux/xattr.h>\n' + s[k:]
+          trusted = ('static const struct xattr_handler shmem_trusted_xattr_handler = {\n'
+                     '\t.prefix = XATTR_TRUSTED_PREFIX,\n'
+                     '\t.get = shmem_xattr_handler_get,\n'
+                     '\t.set = shmem_xattr_handler_set,\n'
+                     '};\n')
+          assert trusted in s, 'trusted handler anchor missing'
+          user = trusted.replace('trusted', 'user').replace('XATTR_TRUSTED_PREFIX', 'XATTR_USER_PREFIX')
+          s = s.replace(trusted, trusted + '\n' + user, 1)
+          arr = ('\t&shmem_security_xattr_handler,\n'
+                 '\t&shmem_trusted_xattr_handler,\n'
+                 '\tNULL\n'
+                 '};')
+          assert arr in s, 'handlers array anchor missing'
+          new = ('\t&shmem_security_xattr_handler,\n'
+                 '\t&shmem_trusted_xattr_handler,\n'
+                 '\t&shmem_user_xattr_handler,\n'
+                 '\tNULL\n'
+                 '};')
+          s = s.replace(arr, new, 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          print('patched: shmem_user_xattr_handler added')
+          PYEOF
+          echo '--- 补丁后校验 ---'
+          grep -n 'shmem_user_xattr_handler' mm/shmem.c
+          grep -n 'XATTR_USER_PREFIX' mm/shmem.c
+          grep -n '#include <linux/xattr.h>' mm/shmem.c
+          echo '--- 是否存在 user. 前缀拒绝逻辑 ---'
+          grep -n 'EOPNOTSUPP' mm/shmem.c || echo 'none (ok)'
+          echo '--- diff ---'
+          diff -u mm/shmem.c.orig mm/shmem.c | head -60 || true
       - name: 构建内核
         run: |
           WORKDIR="$(pwd)"
@@ -720,6 +765,19 @@ jobs:
           echo "编译后空间:"
           df -h
 
+      - name: 验证 tmpfs user xattr 已编入
+        run: |
+          set +e
+          cd kernel_workspace/common
+          echo '--- 编译对象 ---'
+          ls -l out/mm/shmem.o
+          echo '--- System.map 符号 ---'
+          grep -n 'shmem_user_xattr_handler' out/System.map
+          echo -n 'shmem_user_xattr_handler 匹配数: '
+          grep -c 'shmem_user_xattr_handler' out/System.map
+          grep -n 'shmem_xattr_handlers' out/System.map
+          echo '--- vmlinux 内联串 ---'
+          ls -l out/vmlinux
       - name: 保存新的 ccache 缓存
         if: inputs.ccache_update || steps.ccache-restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
