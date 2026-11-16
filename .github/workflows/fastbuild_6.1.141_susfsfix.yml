@@ -561,12 +561,15 @@ jobs:
       - name: 过滤 /proc/cmdline 解锁指纹
         run: |
           cd kernel_workspace/common
+          cp -f fs/proc/cmdline.c fs/proc/cmdline.c.orig 2>/dev/null || true
           cat > fs/proc/cmdline.c <<'PATCHEOF'
           // SPDX-License-Identifier: GPL-2.0
+          #include <linux/fs.h>
           #include <linux/init.h>
           #include <linux/proc_fs.h>
           #include <linux/seq_file.h>
           #include <linux/string.h>
+          #include <linux/types.h>
 
           #define CMDL_KILL_1	"oplus.avbkeysha256="
           #define CMDL_KILL_2	"oplusboot.avbkeysha256="
@@ -623,9 +626,10 @@ jobs:
           fs_initcall(proc_cmdline_init);
           PATCHEOF
           echo '--- cmdline.c 覆写结果 ---'
+          wc -c fs/proc/cmdline.c
           grep -n 'oplusboot.verifiedbootstate=green' fs/proc/cmdline.c
           grep -n 'oplus.avbkeysha256=' fs/proc/cmdline.c
-          wc -l fs/proc/cmdline.c
+          diff -u fs/proc/cmdline.c.orig fs/proc/cmdline.c | head -40 || true
       - name: 构建内核
         run: |
           WORKDIR="$(pwd)"
