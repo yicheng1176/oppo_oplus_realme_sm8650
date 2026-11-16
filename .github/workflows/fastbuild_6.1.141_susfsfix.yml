@@ -558,6 +558,74 @@ jobs:
             done
           fi
            
+      - name: 过滤 /proc/cmdline 解锁指纹
+        run: |
+          cd kernel_workspace/common
+          cat > fs/proc/cmdline.c <<'PATCHEOF'
+          // SPDX-License-Identifier: GPL-2.0
+          #include <linux/init.h>
+          #include <linux/proc_fs.h>
+          #include <linux/seq_file.h>
+          #include <linux/string.h>
+
+          #define CMDL_KILL_1	"oplus.avbkeysha256="
+          #define CMDL_KILL_2	"oplusboot.avbkeysha256="
+          #define CMDL_VBS_OP	"oplusboot.verifiedbootstate="
+          #define CMDL_VBS_AB	"androidboot.verifiedbootstate="
+
+          static int cmdline_proc_show(struct seq_file *m, void *v)
+          {
+          	const char *p = saved_command_line;
+          	bool first = true;
+
+          	while (*p) {
+          		const char *tok;
+          		size_t len;
+
+          		while (*p == ' ')
+          			p++;
+          		if (!*p)
+          			break;
+          		tok = p;
+          		while (*p && *p != ' ')
+          			p++;
+          		len = (size_t)(p - tok);
+
+          		if ((len >= sizeof(CMDL_KILL_1) - 1 &&
+          		     !strncmp(tok, CMDL_KILL_1, sizeof(CMDL_KILL_1) - 1)) ||
+          		    (len >= sizeof(CMDL_KILL_2) - 1 &&
+          		     !strncmp(tok, CMDL_KILL_2, sizeof(CMDL_KILL_2) - 1)))
+          			continue;
+
+          		if (!first)
+          			seq_putc(m, ' ');
+
+          		if (len >= sizeof(CMDL_VBS_OP) - 1 &&
+          		    !strncmp(tok, CMDL_VBS_OP, sizeof(CMDL_VBS_OP) - 1))
+          			seq_puts(m, "oplusboot.verifiedbootstate=green");
+          		else if (len >= sizeof(CMDL_VBS_AB) - 1 &&
+          			 !strncmp(tok, CMDL_VBS_AB, sizeof(CMDL_VBS_AB) - 1))
+          			seq_puts(m, "androidboot.verifiedbootstate=green");
+          		else
+          			seq_write(m, tok, len);
+
+          		first = false;
+          	}
+          	seq_putc(m, '\n');
+          	return 0;
+          }
+
+          static int __init proc_cmdline_init(void)
+          {
+          	proc_create_single("cmdline", 0, NULL, cmdline_proc_show);
+          	return 0;
+          }
+          fs_initcall(proc_cmdline_init);
+          PATCHEOF
+          echo '--- cmdline.c 覆写结果 ---'
+          grep -n 'oplusboot.verifiedbootstate=green' fs/proc/cmdline.c
+          grep -n 'oplus.avbkeysha256=' fs/proc/cmdline.c
+          wc -l fs/proc/cmdline.c
       - name: 构建内核
         run: |
           WORKDIR="$(pwd)"
