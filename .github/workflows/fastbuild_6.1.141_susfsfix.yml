@@ -301,10 +301,11 @@ jobs:
             cd ./common
             patch -p1 -F 3 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
             patch -p1 -N -F 3 < 69_hide_stuff.patch || true
-          # 修补上游 susfs 补丁缺失的 fake_state 定义: 用宏指回真实 selinux_state, 避免空状态导致的空指针
-          sed -i 's/^extern struct selinux_state fake_state;/#define fake_state selinux_state/' ./common/security/selinux/hooks.c || true
-          sed -i 's/^extern struct selinux_state fake_state;/#define fake_state selinux_state/' ./common/security/selinux/selinuxfs.c || true
-          grep -n 'define fake_state' ./common/security/selinux/hooks.c ./common/security/selinux/selinuxfs.c || echo 'WARN fake_state shim not applied'
+          # 上游 susfs 补丁只写了 extern 没有定义 fake_state, 用宏把它指回真实 selinux_state (此步 cwd = common/)
+          for f in security/selinux/hooks.c common/security/selinux/hooks.c security/selinux/selinuxfs.c common/security/selinux/selinuxfs.c; do
+            if [ -f "$f" ]; then sed -i 's/^extern struct selinux_state fake_state;/#define fake_state selinux_state/' "$f"; fi
+          done
+          grep -rn 'define fake_state' security/selinux 2>/dev/null | head -4 || echo 'WARN fake_state shim NOT applied'
             cd ..
           else
             echo "已选择无内置KernelSU模式，跳过susfs配置..."
